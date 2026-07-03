@@ -13,7 +13,9 @@ from src.metrics.halstead import compute_halstead
 from src.metrics.complexity import compute_complexity
 from src.metrics.loc import compute_loc
 from src.metrics.maintainability import compute_mi
+from src.metrics.smells import SmellConfig, detect_smells
 from src.report.console import FileReport, render_table
+from src.report.smells import SmellReport, render_smells
 
 app = typer.Typer(
     name="code-anomaly",
@@ -29,16 +31,8 @@ def _callback() -> None:
     """Detección de anomalías en código fuente — Índice de Mantenibilidad."""
 
 
-@app.command()
-def analyze(
-    path: Path = typer.Argument(..., help="Archivo o directorio a analizar."),
-    extensions: str = typer.Option(
-        "",
-        "--ext",
-        help="Extensiones adicionales separadas por coma (ej. .vue,.svelte).",
-    ),
-) -> None:
-    """Analiza código fuente y muestra el ranking de Índice de Mantenibilidad."""
+def _resolve_files(path: Path, extensions: str) -> list[Path]:
+    """Valida la ruta, resuelve extensiones y recolecta archivos (sale si no hay)."""
     if not path.exists():
         console.print(f"[red]Error:[/red] La ruta no existe: {path}")
         raise typer.Exit(code=1)
@@ -53,6 +47,20 @@ def analyze(
     if not files:
         console.print("[yellow]No se encontraron archivos de código fuente.[/yellow]")
         raise typer.Exit()
+    return files
+
+
+@app.command()
+def analyze(
+    path: Path = typer.Argument(..., help="Archivo o directorio a analizar."),
+    extensions: str = typer.Option(
+        "",
+        "--ext",
+        help="Extensiones adicionales separadas por coma (ej. .vue,.svelte).",
+    ),
+) -> None:
+    """Analiza código fuente y muestra el ranking de Índice de Mantenibilidad."""
+    files = _resolve_files(path, extensions)
 
     console.print(f"\n[bold]Analizando {len(files)} archivo(s) en[/bold] [cyan]{path}[/cyan]...\n")
 
@@ -88,6 +96,47 @@ def analyze(
         )
 
     render_table(reports, console)
+
+
+@app.command()
+def smells(
+    path: Path = typer.Argument(..., help="Archivo o directorio a analizar."),
+    extensions: str = typer.Option(
+        "",
+        "--ext",
+        help="Extensiones adicionales separadas por coma (ej. .vue,.svelte).",
+    ),
+    max_function_lines: int = typer.Option(
+        40, "--max-func-lines", help="Umbral de líneas para 'función larga'."
+    ),
+    max_nesting: int = typer.Option(
+        4, "--max-nesting", help="Profundidad de anidamiento permitida."
+    ),
+) -> None:
+    """Detecta code smells por patrones léxicos (números mágicos, anidamiento, etc.)."""
+    files = _resolve_files(path, extensions)
+    config = SmellConfig(
+        long_function_lines=max_function_lines,
+        max_nesting_depth=max_nesting,
+    )
+
+    console.print(
+        f"\n[bold]Buscando code smells en {len(files)} archivo(s)[/bold] "
+        f"[cyan]{path}[/cyan]...\n"
+    )
+
+    reports: list[SmellReport] = []
+    for fpath in files:
+        source = read_source(fpath)
+        if not source.strip():
+            reports.append(SmellReport(path=fpath, smells=[]))
+            continue
+        tokens = tokenize(source, filename=fpath.name)
+        reports.append(
+            SmellReport(path=fpath, smells=detect_smells(source, tokens, config))
+        )
+
+    render_smells(reports, console)
 
 
 def main() -> None:

@@ -37,6 +37,29 @@ python -m src.cli analyze src/ --ext .vue,.svelte
 
 La tabla muestra los archivos **ordenados por MI ascendente** (el más riesgoso primero).
 
+### Detección de *code smells*
+
+```bash
+# Buscar code smells en un directorio o archivo
+python -m src.cli smells samples/
+
+# Ajustar umbrales
+python -m src.cli smells src/ --max-func-lines 60 --max-nesting 5
+```
+
+Muestra, por archivo, los smells detectados (ordenados por severidad) y un
+resumen global. Reglas detectadas:
+
+| Regla | Severidad | Qué marca |
+|-------|-----------|-----------|
+| `dangerous-function` | 🔴 crítico | Llamadas a `gets`, `strcpy`, `system`, `eval`, … |
+| `unbalanced-delimiters` | 🔴 crítico | Paréntesis / llaves / corchetes sin pareja |
+| `deep-nesting` | 🟡 advertencia | Anidamiento (por indentación) sobre el umbral |
+| `long-function` | 🟡 advertencia | Funciones más largas que el umbral de líneas |
+| `magic-number` | 🔵 info | Literales numéricos fuera de la whitelist |
+| `commented-code` | 🔵 info | Comentarios que parecen código comentado |
+| `todo-marker` | 🔵 info | Marcadores `TODO` / `FIXME` / `HACK` / `XXX` |
+
 ## Ejecutar tests
 
 ```bash
@@ -79,9 +102,11 @@ src/
     complexity.py    # complejidad ciclomática (conteo de tokens de decisión)
     loc.py           # LOC, SLOC, blancos, comentarios, ratio
     maintainability.py  # fórmula MI normalizada de Microsoft
+    smells.py        # detector de code smells por patrones léxicos/textuales
   report/
-    console.py       # tabla Rich con ranking y colores
-  cli.py             # punto de entrada CLI (Typer)
+    console.py       # tabla Rich con ranking de mantenibilidad
+    smells.py        # tablas Rich de code smells por archivo + resumen
+  cli.py             # punto de entrada CLI (Typer): comandos analyze / smells
 samples/             # archivos de ejemplo para prueba
 tests/               # suite de pruebas (pytest)
 ```
