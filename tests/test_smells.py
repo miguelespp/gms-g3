@@ -105,6 +105,43 @@ def test_short_function_not_flagged():
     assert "long-function" not in _rules(smells)
 
 
+# --- regla compuesta: complex-function ------------------------------------
+
+def _complex_source() -> str:
+    """Función larga, muy ramificada y anidada (dispara las 3 métricas)."""
+    lines = ["def brain(data):"]
+    for i in range(20):
+        lines.append(f"    if data[{i}] > 0:")
+        lines.append(f"        if data[{i}] < 100:")
+        lines.append(f"            if data[{i}] != 7:")
+        lines.append(f"                data[{i}] = data[{i}] and True")
+    lines.append("    return data")
+    return "\n".join(lines) + "\n"
+
+
+def test_complex_function_detected():
+    smells = _detect(_complex_source())
+    complex_ = [s for s in smells if s.rule == "complex-function"]
+    assert len(complex_) == 1
+    assert "brain" in complex_[0].message
+
+
+def test_complex_function_suppresses_long_function():
+    # La misma función no debe reportarse dos veces (complex gana sobre long).
+    smells = _detect(_complex_source(), long_function_lines=10)
+    assert "complex-function" in _rules(smells)
+    assert "long-function" not in _rules(smells)
+
+
+def test_long_but_simple_function_not_complex():
+    # Larga pero sin ramas ni anidamiento: es long-function, NO complex-function.
+    body = "\n".join(f"    x{i} = {i}" for i in range(50))
+    source = f"def flat():\n{body}\n    return 0\n"
+    smells = _detect(source, long_function_lines=40)
+    assert "long-function" in _rules(smells)
+    assert "complex-function" not in _rules(smells)
+
+
 # --- delimiter balance -----------------------------------------------------
 
 def test_unbalanced_open_delimiter():

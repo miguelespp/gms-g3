@@ -24,6 +24,7 @@ from typing import Iterable
 from pygments.token import Token
 
 from src.core.lexer import NormalizedToken
+from src.metrics.complexity import compute_complexity
 
 
 # Severidades ordenadas de mayor a menor gravedad (para priorizar/ordenar).
@@ -78,6 +79,11 @@ class SmellConfig:
     allowed_numbers: frozenset[str] = DEFAULT_ALLOWED_NUMBERS
     dangerous_functions: frozenset[str] = DEFAULT_DANGEROUS_FUNCTIONS
     function_keywords: frozenset[str] = DEFAULT_FUNCTION_KEYWORDS
+    # Regla compuesta "complex-function" (detection strategy Lanza & Marinescu):
+    # se dispara solo cuando las TRES métricas superan su umbral a la vez.
+    complex_min_loc: int = 30
+    complex_min_cyclomatic: int = 8
+    complex_min_nesting: int = 3
 
 
 def _indent_of(line: str) -> int:
@@ -235,42 +241,137 @@ def _detect_deep_nesting(
     return out
 
 
-def _detect_long_functions(
+@dataclass(frozen=True)
+class _FunctionSpan:
+    name: str
+    start: int  # línea de la firma (1-based)
+    end: int    # última línea del cuerpo (1-based)
+
+
+def _function_spans(
     source_lines: list[str],
     tokens: list[NormalizedToken],
     code_lines: set[int],
     keywords: frozenset[str],
-    threshold: int,
-) -> list[Smell]:
-    """Detecta funciones más largas que *threshold* midiendo el bloque por indentación."""
-    out: list[Smell] = []
+) -> list[_FunctionSpan]:
+    """Delimita cada función por su firma y su indentación (una sola vez)."""
     total = len(source_lines)
+    spans: list[_FunctionSpan] = []
 
-    for tok in tokens:
+    for i, tok in enumerate(tokens):
         if tok.ttype not in Token.Keyword or tok.value not in keywords:
             continue
         start = tok.line
         if start < 1 or start > total:
             continue
-        start_indent = _indent_of(source_lines[start - 1])
 
-        # El bloque termina en la primera línea de código con indentación <= la firma.
-        end = total
-        for j in range(start + 1, total + 1):
-            if j not in code_lines:
-                continue
-            if _indent_of(source_lines[j - 1]) <= start_indent:
-                end = j - 1
+        # El nombre es el primer token Name que sigue a la palabra clave.
+        name = "<anónima>"
+        for j in range(i + 1, min(i + 4, len(tokens))):
+            if tokens[j].ttype in Token.Name:
+                name = tokens[j].value
                 break
 
-        length = end - start + 1
+        start_indent = _indent_of(source_lines[start - 1])
+        # El bloque termina en la primera línea de código con indentación <= la firma.
+        end = total
+        for k in range(start + 1, total + 1):
+            if k not in code_lines:
+                continue
+            if _indent_of(source_lines[k - 1]) <= start_indent:
+                end = k - 1
+                break
+
+        spans.append(_FunctionSpan(name=name, start=start, end=end))
+    return spans
+
+
+def _max_nesting_in_span(
+    source_lines: list[str], code_lines: set[int], span: _FunctionSpan
+) -> int:
+    """Niveles de anidamiento por indentación DENTRO de la función (cuerpo = nivel 1)."""
+    base = _indent_of(source_lines[span.start - 1])
+    stack: list[int] = [base]
+    max_depth = 0
+
+    for idx in range(span.start + 1, span.end + 1):
+        if idx not in code_lines:
+            continue
+        line = source_lines[idx - 1]
+        if not line.strip():
+            continue
+        indent = _indent_of(line)
+        if indent > stack[-1]:
+            stack.append(indent)
+        elif indent < stack[-1]:
+            while len(stack) > 1 and stack[-1] > indent:
+                stack.pop()
+        max_depth = max(max_depth, len(stack) - 1)
+    return max_depth
+
+
+def _cyclomatic_in_span(
+    tokens: list[NormalizedToken], span: _FunctionSpan
+) -> int:
+    """Complejidad ciclomática de una función (reusa compute_complexity)."""
+    body = [t for t in tokens if span.start <= t.line <= span.end]
+    return compute_complexity(body)
+
+
+def _detect_long_functions(
+    spans: list[_FunctionSpan], threshold: int, skip_starts: set[int]
+) -> list[Smell]:
+    """Detecta funciones más largas que *threshold* (omite las ya marcadas como complejas)."""
+    out: list[Smell] = []
+    for span in spans:
+        if span.start in skip_starts:
+            continue
+        length = span.end - span.start + 1
         if length > threshold:
             out.append(
                 Smell(
                     rule="long-function",
                     severity="warning",
-                    line=start,
-                    message=f"Función de ~{length} líneas (umbral {threshold}).",
+                    line=span.start,
+                    message=f"Función '{span.name}' de ~{length} líneas (umbral {threshold}).",
+                )
+            )
+    return out
+
+
+def _detect_complex_functions(
+    source_lines: list[str],
+    tokens: list[NormalizedToken],
+    code_lines: set[int],
+    spans: list[_FunctionSpan],
+    config: SmellConfig,
+) -> list[Smell]:
+    """Detection strategy compuesta: LOC ∧ Complejidad ∧ Anidamiento sobre umbral.
+
+    Combina las tres métricas con AND lógico (estilo Lanza & Marinescu), de modo
+    que una función larga PERO simple no se marca — reduce falsos positivos.
+    """
+    out: list[Smell] = []
+    for span in spans:
+        loc = span.end - span.start + 1
+        cc = _cyclomatic_in_span(tokens, span)
+        nesting = _max_nesting_in_span(source_lines, code_lines, span)
+
+        if (
+            loc > config.complex_min_loc
+            and cc > config.complex_min_cyclomatic
+            and nesting > config.complex_min_nesting
+        ):
+            out.append(
+                Smell(
+                    rule="complex-function",
+                    severity="warning",
+                    line=span.start,
+                    message=(
+                        f"Función '{span.name}' compleja: {loc} líneas, "
+                        f"CC={cc}, anidamiento {nesting} "
+                        f"(combina 3 métricas sobre umbral)."
+                    ),
                 )
             )
     return out
@@ -285,16 +386,22 @@ def detect_smells(
     source_lines = source.splitlines()
     code_lines = _code_line_numbers(tokens)
 
+    spans = _function_spans(source_lines, tokens, code_lines, config.function_keywords)
+
     smells: list[Smell] = []
     smells += _detect_magic_numbers(tokens, config.allowed_numbers)
     smells += _detect_dangerous_functions(tokens, config.dangerous_functions)
     smells += _detect_comment_smells(tokens)
     smells += _detect_unbalanced_delimiters(tokens)
     smells += _detect_deep_nesting(source_lines, code_lines, config.max_nesting_depth)
-    smells += _detect_long_functions(
-        source_lines, tokens, code_lines, config.function_keywords,
-        config.long_function_lines,
+
+    complex_smells = _detect_complex_functions(
+        source_lines, tokens, code_lines, spans, config
     )
+    smells += complex_smells
+    # No reportar long-function si la función ya se marcó como complex-function.
+    complex_starts = {s.line for s in complex_smells}
+    smells += _detect_long_functions(spans, config.long_function_lines, complex_starts)
 
     smells.sort(key=lambda s: (s.line, SEVERITY_ORDER.get(s.severity, 9)))
     return smells

@@ -54,11 +54,20 @@ resumen global. Reglas detectadas:
 |-------|-----------|-----------|
 | `dangerous-function` | 🔴 crítico | Llamadas a `gets`, `strcpy`, `system`, `eval`, … |
 | `unbalanced-delimiters` | 🔴 crítico | Paréntesis / llaves / corchetes sin pareja |
+| `complex-function` | 🟡 advertencia | Función que supera **a la vez** LOC, complejidad ciclomática y anidamiento (regla compuesta) |
 | `deep-nesting` | 🟡 advertencia | Anidamiento (por indentación) sobre el umbral |
 | `long-function` | 🟡 advertencia | Funciones más largas que el umbral de líneas |
 | `magic-number` | 🔵 info | Literales numéricos fuera de la whitelist |
 | `commented-code` | 🔵 info | Comentarios que parecen código comentado |
 | `todo-marker` | 🔵 info | Marcadores `TODO` / `FIXME` / `HACK` / `XXX` |
+
+> **Regla compuesta (`complex-function`).** Siguiendo las *detection strategies* de
+> Lanza & Marinescu, esta regla combina tres métricas con AND lógico
+> (`LOC ∧ Complejidad Ciclomática ∧ Anidamiento`): una función solo se marca si
+> supera los tres umbrales a la vez. Así, una función larga *pero* simple no se
+> reporta, reduciendo falsos positivos. Cuando una función cae en `complex-function`,
+> se omite el `long-function` redundante. Reutiliza `compute_complexity` del módulo
+> de mantenibilidad.
 
 ## Ejecutar tests
 
