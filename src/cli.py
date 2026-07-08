@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import typer
 from rich.console import Console
@@ -16,6 +17,18 @@ from src.metrics.maintainability import compute_mi
 from src.metrics.smells import SmellConfig, detect_smells
 from src.report.console import FileReport, render_table
 from src.report.smells import SmellReport, render_smells
+from src.report.summary import IntegratedReport, render_integrated_report
+
+
+def _configure_output_encoding() -> None:
+    """Forzar UTF-8 evita acentos corruptos en varias consolas de Windows."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name)
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
+_configure_output_encoding()
 
 app = typer.Typer(
     name="code-anomaly",
@@ -137,6 +150,72 @@ def smells(
         )
 
     render_smells(reports, console)
+
+
+@app.command()
+def report(
+    path: Path = typer.Argument(..., help="Archivo o directorio a analizar."),
+    extensions: str = typer.Option(
+        "",
+        "--ext",
+        help="Extensiones adicionales separadas por coma (ej. .vue,.svelte).",
+    ),
+    max_function_lines: int = typer.Option(
+        40, "--max-func-lines", help="Umbral de líneas para 'función larga'."
+    ),
+    max_nesting: int = typer.Option(
+        4, "--max-nesting", help="Profundidad de anidamiento permitida."
+    ),
+) -> None:
+    """Muestra un reporte integrado: MI, code smells y recomendaciones."""
+    files = _resolve_files(path, extensions)
+    config = SmellConfig(
+        long_function_lines=max_function_lines,
+        max_nesting_depth=max_nesting,
+    )
+
+    console.print(
+        f"\n[bold]Generando reporte integrado de {len(files)} archivo(s)[/bold] "
+        f"[cyan]{path}[/cyan]...\n"
+    )
+
+    reports: list[IntegratedReport] = []
+    for fpath in files:
+        source = read_source(fpath)
+        if not source.strip():
+            reports.append(
+                IntegratedReport(
+                    path=fpath,
+                    sloc=0,
+                    cyclomatic=1,
+                    volume=0.0,
+                    mi=100.0,
+                    grade="green",
+                    smells=[],
+                )
+            )
+            continue
+
+        tokens = tokenize(source, filename=fpath.name)
+        halstead = compute_halstead(tokens)
+        cc = compute_complexity(tokens)
+        loc = compute_loc(source, tokens)
+        mi_result = compute_mi(halstead.volume, cc, loc.sloc)
+        smells_found = detect_smells(source, tokens, config)
+
+        reports.append(
+            IntegratedReport(
+                path=fpath,
+                sloc=loc.sloc,
+                cyclomatic=cc,
+                volume=halstead.volume,
+                mi=mi_result.mi,
+                grade=mi_result.grade,
+                smells=smells_found,
+            )
+        )
+
+    render_integrated_report(reports, console)
 
 
 def main() -> None:

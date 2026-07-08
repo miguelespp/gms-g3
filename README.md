@@ -45,6 +45,9 @@ python -m src.cli smells samples/
 
 # Ajustar umbrales
 python -m src.cli smells src/ --max-func-lines 60 --max-nesting 5
+
+# Reporte integrado: MI + smells + recomendación
+python -m src.cli report samples/
 ```
 
 Muestra, por archivo, los smells detectados (ordenados por severidad) y un
@@ -115,7 +118,8 @@ src/
   report/
     console.py       # tabla Rich con ranking de mantenibilidad
     smells.py        # tablas Rich de code smells por archivo + resumen
-  cli.py             # punto de entrada CLI (Typer): comandos analyze / smells
+    summary.py       # reporte integrado MI + smells + recomendaciones
+  cli.py             # punto de entrada CLI (Typer): analyze / smells / report
 samples/             # archivos de ejemplo para prueba
 tests/               # suite de pruebas (pytest)
 ```
