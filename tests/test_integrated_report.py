@@ -14,6 +14,7 @@ def _report(**kwargs) -> IntegratedReport:
         "sloc": 10,
         "cyclomatic": 2,
         "volume": 100.0,
+        "comment_ratio": 0.2,
         "mi": 80.0,
         "grade": "green",
         "smells": [],
@@ -68,4 +69,5 @@ def test_render_integrated_report_includes_global_summary():
     output = console.export_text()
     assert "Archivos: 1" in output
     assert "MI promedio: 80.0" in output
+    assert "20.0%" in output
     assert "Archivo con menor MI: sample.py" in output

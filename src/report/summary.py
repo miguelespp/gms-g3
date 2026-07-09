@@ -18,6 +18,7 @@ class IntegratedReport:
     sloc: int
     cyclomatic: int
     volume: float
+    comment_ratio: float
     mi: float
     grade: str
     smells: list[Smell] = field(default_factory=list)
@@ -89,6 +90,7 @@ def render_integrated_report(
     table.add_column("MI", justify="right")
     table.add_column("R", justify="center")
     table.add_column("CC", justify="right")
+    table.add_column("Com", justify="right")
     table.add_column("C", justify="right")
     table.add_column("WARN", justify="right")
     table.add_column("INFO", justify="right")
@@ -102,6 +104,7 @@ def render_integrated_report(
             f"[{color} bold]{report.mi:.1f}[/{color} bold]",
             f"[{color}]{risk}[/{color}]",
             str(report.cyclomatic),
+            f"{report.comment_ratio * 100:.1f}%",
             str(report.critical),
             str(report.warnings),
             str(report.info),
